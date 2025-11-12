@@ -148,18 +148,29 @@ def main(json_path=''):
         opt['datasets']['val'] = opt['datasets']['test']
     del opt['datasets']['test']
 
+    gettrace = getattr(sys, 'gettrace', None)
+    is_debugging = bool(gettrace and gettrace())
+
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train':
             train_set = define_Dataset(dataset_opt)
             train_size = int(math.ceil(len(train_set) / dataset_opt['dataloader_batch_size']))
             if opt['rank'] == 0:
                 logger.info('Number of train images: {:,d}, iters: {:,d}'.format(len(train_set), train_size))
+            requested_workers = dataset_opt.get('dataloader_num_workers', 0)
+            effective_workers = requested_workers
+            if is_debugging and requested_workers:
+                effective_workers = 0
+                if opt['rank'] == 0:
+                    logger.warning(
+                        'Debugger detected – overriding training dataloader workers from %d to 0 to avoid deadlocks when stepping through batches.',
+                        requested_workers)
             if opt['dist']:
                 train_sampler = DistributedSampler(train_set, shuffle=dataset_opt['dataloader_shuffle'], drop_last=True, seed=seed)
                 train_loader = DataLoader(train_set,
                                           batch_size=dataset_opt['dataloader_batch_size']//opt['num_gpu'],
                                           shuffle=False,
-                                          num_workers=dataset_opt['dataloader_num_workers']//opt['num_gpu'],
+                                          num_workers=effective_workers//opt['num_gpu'],
                                           drop_last=True,
                                           pin_memory=False,
                                           sampler=train_sampler)
@@ -167,7 +178,7 @@ def main(json_path=''):
                 train_loader = DataLoader(train_set,
                                           batch_size=dataset_opt['dataloader_batch_size'],
                                           shuffle=dataset_opt['dataloader_shuffle'],
-                                          num_workers=dataset_opt['dataloader_num_workers'],
+                                          num_workers=effective_workers,
                                           drop_last=True,
                                           pin_memory=False)
 
